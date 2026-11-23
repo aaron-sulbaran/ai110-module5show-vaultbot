@@ -13,7 +13,6 @@ Experiment with:
 """
 
 import os
-from google import genai
 
 # Central place to update the model name if needed.
 # You can swap this for a different Gemini model in the future.
@@ -38,6 +37,14 @@ class GeminiClient:
                 "Missing GEMINI_API_KEY environment variable. "
                 "Set it in your shell or .env file to enable LLM features."
             )
+
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError(
+                "The google-genai package is not installed. "
+                "Run pip install -r requirements.txt to enable LLM features."
+            ) from exc
 
         self.client = genai.Client(api_key=api_key)
 

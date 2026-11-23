@@ -25,3 +25,9 @@ venv/
 
 # Logs
 *.log
+
+# Local environments and personal configuration
+.venv/
+.env
+.pytest_cache/
+.vaultbot_cache/

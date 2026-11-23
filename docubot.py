@@ -8,6 +8,7 @@ Core DocuBot class responsible for:
 """
 
 import os
+import re
 import glob
 
 class DocuBot:
@@ -44,13 +45,18 @@ class DocuBot:
                 docs.append((filename, text))
         return docs
 
+    @staticmethod
+    def _words(text):
+        """Lowercase words with punctuation stripped. Baseline tokenizer."""
+        return re.findall(r"[a-z0-9_]+", text.lower())
+
     # -----------------------------------------------------------
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
     def build_index(self, documents):
         """
-        TODO (Phase 1):
+        Phase 1 baseline:
         Build a tiny inverted index mapping lowercase words to the documents
         they appear in.
 
@@ -64,7 +70,9 @@ class DocuBot:
         ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+        for filename, text in documents:
+            for word in set(self._words(text)):
+                index.setdefault(word, []).append(filename)
         return index
 
     # -----------------------------------------------------------
@@ -73,7 +81,7 @@ class DocuBot:
 
     def score_document(self, query, text):
         """
-        TODO (Phase 1):
+        Phase 1 baseline:
         Return a simple relevance score for how well the text matches the query.
 
         Suggested baseline:
@@ -81,18 +89,30 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        text_words = set(self._words(text))
+        return sum(1 for word in set(self._words(query)) if word in text_words)
 
     def retrieve(self, query, top_k=3):
         """
-        TODO (Phase 1):
+        Phase 1 baseline:
         Use the index and scoring function to select top_k relevant document snippets.
 
         Return a list of (filename, text) sorted by score descending.
         """
-        results = []
-        # TODO: implement retrieval logic
+        candidate_files = set()
+        for word in self._words(query):
+            candidate_files.update(self.index.get(word, []))
+
+        scored = []
+        for filename, text in self.documents:
+            if filename not in candidate_files:
+                continue
+            score = self.score_document(query, text)
+            if score > 0:
+                scored.append((score, filename, text))
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        results = [(filename, text) for _, filename, text in scored]
         return results[:top_k]
 
     # -----------------------------------------------------------
