@@ -1,0 +1,24 @@
+flowchart TD
+    Q[User question<br/>main.py ask] --> V{validate_query<br/>guardrails.py}
+    V -- empty, too long, no words --> R[Refusal<br/>I do not know based on this vault]
+
+    subgraph Indexing [Indexing, once per run]
+        N[Vault folder<br/>VAULT_PATH or sample_vault] --> L[vault_loader.py<br/>walk folders, parse frontmatter]
+        L -- private: true, excluded globs,<br/>.obsidian, _archive --> X[Skipped, never indexed]
+        L --> C[Heading level chunks<br/>path, source, title, heading trail]
+        C --> I[BM25 inverted index<br/>title and heading words boosted]
+    end
+
+    V -- valid --> S[VaultBot.search<br/>BM25 score x source weight<br/>max 2 chunks per note]
+    I --> S
+    S --> K{Confidence check<br/>IDF weighted coverage<br/>of the question >= 0.5}
+    K -- below threshold --> R
+    K -- pass, no --llm --> A1[Answer: cited snippets<br/>mode retrieval]
+    K -- pass, --llm --> D[redact_sensitive<br/>emails, phones, keys masked]
+    D --> G[Gemini<br/>answer_with_citations]
+    G --> CC{check_citations<br/>every n in 1..k}
+    CC -- grounded --> A2[Answer with citations<br/>mode rag]
+    CC -- uncited or invalid --> A3[LLM answer discarded<br/>cited snippets shown<br/>mode retrieval-fallback]
+    G -- model says it does not know --> R
+
+    E[evaluation.py --vault<br/>14 cases: 10 answerable, 4 refusals] -. runs baseline and VaultBot .-> S
