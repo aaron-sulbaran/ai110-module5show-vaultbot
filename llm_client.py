@@ -126,7 +126,7 @@ Rules:
             )
             return (response.text or "").strip()
         except Exception as e:
-            return f"API error — could not generate answer. ({type(e).__name__}: {e})"
+            return f"API error, could not generate answer. ({type(e).__name__}: {e})"
 
     # -----------------------------------------------------------
     # VaultBot: RAG generation with numbered, checkable citations
