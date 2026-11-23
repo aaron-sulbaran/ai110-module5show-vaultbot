@@ -17,3 +17,4 @@ title: Index
 ## Concepts
 - [[spaced-repetition]]: how flashcard intervals are scheduled
 - [[weekly-review]]: the Sunday planning routine
+- [[money-admin]]: where financial paperwork lives, and the monthly routine

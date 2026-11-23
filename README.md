@@ -28,8 +28,9 @@ That design works for four short files about one codebase. It does not hold up f
 | **Multi source retrieval** (stretch: RAG enhancement) | `vaultbot.py` | Each top level folder is a source with its own weight (`wiki` 1.0, `sources` 0.85), and `--source` limits a search to one source. |
 | **Confidence refusal** (guardrail) | `vaultbot.py` | If the best chunk covers less than half of the question's information, the bot answers "I do not know based on this vault." |
 | **Input validation, redaction, citation check** (guardrails) | `guardrails.py` | Empty or oversized questions are rejected. Emails, phone numbers, and key shaped strings are masked before any snippet is sent to an LLM. An LLM answer that cites nothing, or cites a snippet it was not given, is discarded. |
+| **Sensitive request block and identifier masking** (guardrails) | `guardrails.py` | Questions asking for credentials, bank or card details, or government IDs are refused before retrieval runs, whatever the vault contains. SSN, card, and account shaped numbers are masked in every displayed snippet, including local mode. |
 | **Privacy exclusions** | `vault_loader.py` | Notes with `private: true` in frontmatter, excluded globs, and folders like `.obsidian` and `_archive` are never read into the index. |
-| **Evaluation harness** (stretch: test harness) | `evaluation.py`, `dataset.py` | 14 predefined cases run against the DocuBot baseline and VaultBot, with a pass/fail summary and exit code. |
+| **Evaluation harness** (stretch: test harness) | `evaluation.py`, `dataset.py` | 16 predefined cases run against the DocuBot baseline and VaultBot, with a pass/fail summary and exit code. |
 
 ## Privacy model
 
@@ -38,6 +39,7 @@ This repository contains code and `sample_vault/`, a small **fictional** vault. 
 - Your own vault is referenced only by `VAULT_PATH` in `.env`, which is gitignored. Nothing from your vault is copied into the project folder, and no index is written to disk.
 - The default mode is fully local. No network call is made unless you pass `--llm`.
 - With `--llm`, only the top retrieved snippets are sent to Gemini, after redaction.
+- Questions that ask for a password, a bank routing or account number, a card number, or a government ID are refused outright. The bot is for recalling notes, not for fishing out secrets, so this holds even if such a value is sitting in a note.
 
 ## Architecture
 
@@ -55,11 +57,13 @@ flowchart TD
         C --> I[BM25 inverted index<br/>title and heading words boosted]
     end
 
-    V -- valid --> S[VaultBot.search<br/>BM25 score x source weight<br/>max 2 chunks per note]
+    V -- valid --> SR{detect_sensitive_request<br/>credentials, bank, card,<br/>government ID}
+    SR -- sensitive --> RS[Refusal<br/>I will not look up credentials or<br/>financial and government identifiers]
+    SR -- ordinary --> S[VaultBot.search<br/>BM25 score x source weight<br/>max 2 chunks per note]
     I --> S
     S --> K{Confidence check<br/>IDF weighted coverage<br/>of the question >= 0.5}
     K -- below threshold --> R
-    K -- pass, no --llm --> A1[Answer: cited snippets<br/>mode retrieval]
+    K -- pass, no --llm --> A1[Answer: cited snippets<br/>identifiers masked<br/>mode retrieval]
     K -- pass, --llm --> D[redact_sensitive<br/>emails, phones, keys masked]
     D --> G[Gemini<br/>answer_with_citations]
     G --> CC{check_citations<br/>every n in 1..k}
@@ -67,10 +71,10 @@ flowchart TD
     CC -- uncited or invalid --> A3[LLM answer discarded<br/>cited snippets shown<br/>mode retrieval-fallback]
     G -- model says it does not know --> R
 
-    E[evaluation.py --vault<br/>14 cases: 10 answerable, 4 refusals] -. runs baseline and VaultBot .-> S
+    E[evaluation.py --vault<br/>16 cases: 11 answerable, 5 refusals] -. runs baseline and VaultBot .-> S
 ```
 
-Data flow: a question is validated, scored against a BM25 index of heading level chunks, and gated by a confidence check. Below the threshold the system refuses. Above it, the system returns cited snippets, or (with `--llm`) redacts the snippets, asks Gemini for a cited answer, and verifies the citations before showing it.
+Data flow: a question is validated, checked for sensitive requests, scored against a BM25 index of heading level chunks, and gated by a confidence check. Below the threshold the system refuses. Above it, the system returns cited snippets, or (with `--llm`) redacts the snippets, asks Gemini for a cited answer, and verifies the citations before showing it.
 
 ## Setup
 
@@ -154,7 +158,7 @@ spring semester, built with Sam Whitfield.
 $ python main.py ask "What action items came out of the Trailhead kickoff?" --source sources --top-k 1
 Question:   What action items came out of the Trailhead kickoff?
 Mode:       retrieval
-Confidence: 0.61 (threshold 0.50)
+Confidence: 0.62 (threshold 0.50)
 
 [1] sources/meetings/2026-03-04 trailhead kickoff.md#Action items
 - Jordan: write the storage schema by March 11.
@@ -167,12 +171,12 @@ Confidence: 0.61 (threshold 0.50)
 ```text
 $ python main.py stats
 vault: sample_vault
-files_indexed: 11
+files_indexed: 12
 files_skipped_private: 1
 files_skipped_excluded: 0
-chunks: 33
-chunks_by_source: {'(root)': 1, 'sources': 6, 'wiki': 26}
-unique_terms: 345
+chunks: 36
+chunks_by_source: {'(root)': 1, 'sources': 6, 'wiki': 29}
+unique_terms: 373
 ```
 
 ## Guardrail examples
@@ -180,13 +184,15 @@ unique_terms: 345
 | Input | Behavior | Result |
 | --- | --- | --- |
 | `"How much is the rent on the new lease?"` (the only answer is in a note marked `private: true`) | The private note was never indexed. Best remaining chunk covers 27% of the question, below the 50% threshold. | Refusal: "I do not know based on this vault." |
+| `"What is my bank routing number?"` (the vault has a note that mentions the bank and the routing number, so retrieval alone is confident: 1.00) | `detect_sensitive_request` matches "routing number" (category: bank details) before retrieval runs. | Refusal: "I will not look up credentials or financial and government identifiers." The LLM is never called. |
+| A displayed snippet contains `SSN 123-45-6789` and `routing number: 021000021` | `mask_identifiers` runs on every snippet that is shown, in every mode. | The snippet shows `[REDACTED ID]` and `[REDACTED ACCOUNT]`. |
 | `"Who won the 2022 World Cup?"` (off topic) | No chunk shares an informative word with the question. Confidence 0.00. | Refusal. The LLM is never called. |
-| `"What is the payment processing vendor for Trailhead?"` (real project, fact not in the notes) | "Trailhead" matches many chunks, but "payment", "processing", and "vendor" match none. Confidence 0.11. | Refusal, instead of returning Trailhead notes that do not answer it. |
+| `"What is the payment processing vendor for Trailhead?"` (real project, fact not in the notes) | "Trailhead" matches many chunks, but "payment", "processing", and "vendor" match none. Confidence 0.12. | Refusal, instead of returning Trailhead notes that do not answer it. |
 | `"   "` (empty) | Rejected by `validate_query` before retrieval. | Refusal with the note "The question is empty." |
 | LLM replies "Office hours are Wednesdays at noon." with no citation | `check_citations` fails: the answer cites no sources. | LLM answer discarded. The retrieved snippet (which says Tuesdays) is shown instead, mode `retrieval-fallback`. |
 | A retrieved snippet contains `pat@example.com` and `512-555-0147`, and `--llm` is on | `redact_sensitive` runs before the prompt is built. | Gemini receives `[REDACTED EMAIL]` and `[REDACTED PHONE]`. |
 
-The refusal as it appears in the terminal:
+The two kinds of refusal as they appear in the terminal:
 
 ```text
 $ python main.py ask "How much is the rent on the new lease?"
@@ -198,11 +204,23 @@ Note:       Confidence 0.27 is below the threshold 0.50. The vault does not cove
 I do not know based on this vault.
 ```
 
-The last two rows are covered by tests that use a fake LLM (`test_uncited_llm_answer_is_discarded`, `test_snippets_are_redacted_before_reaching_the_llm`), so they run without an API key.
+```text
+$ python main.py ask "What is my bank routing number?"
+Question:   What is my bank routing number?
+Mode:       refusal
+Confidence: 0.00 (threshold 0.50)
+Note:       Sensitive request (bank details). Refused before retrieval, whatever the vault contains.
+
+I will not look up credentials or financial and government identifiers.
+```
+
+The two LLM rows are covered by tests that use a fake LLM (`test_uncited_llm_answer_is_discarded`, `test_snippets_are_redacted_before_reaching_the_llm`), so they run without an API key.
+
+**Why the sensitive request block exists.** The first version relied on the confidence check alone. On the sample vault it refused "What is my bank account number?" correctly. On a real vault of about 2,700 notes the question "What is my bank routing number?" scored 0.76 and came back with unrelated snippets, because across thousands of notes those words do appear near each other somewhere. A proximity based score was measured as a fix and changed nothing (the words really are adjacent in some emails), so the request is now refused by what it asks for instead of by how well it matches. The sample vault has a note, `wiki/concepts/money-admin.md`, that reproduces the problem: retrieval is fully confident about the bank questions, and only the block stops them. On the real vault, bank routing, SSN, passport, card number, and password questions are all refused.
 
 ## Evaluation harness
 
-`python main.py eval` (or `python evaluation.py --vault`) runs 14 predefined cases against two systems on the same vault: the DocuBot baseline (whole files, keyword counting) and VaultBot. Ten cases are answerable and pass only if the right note is retrieved **and** the retrieved text contains the answer. Four cases must be refused. The exit code is 0 only when VaultBot passes every case.
+`python main.py eval` (or `python evaluation.py --vault`) runs 16 predefined cases against two systems on the same vault: the DocuBot baseline (whole files, keyword counting) and VaultBot. Eleven cases are answerable and pass only if the right note is retrieved **and** the retrieved text contains the answer. Five cases must be refused. The exit code is 0 only when VaultBot passes every case.
 
 ```text
 $ python main.py eval
@@ -229,19 +247,23 @@ Baseline (DocuBot: whole files, keyword count)
         wiki/projects/pantry-pal.md
   PASS  [answer] Who has to measure battery drain before the demo?
         sources/meetings/2026-03-18 advisor check-in.md
+  PASS  [answer] How much do I move to savings each month?
+        wiki/concepts/money-admin.md
   FAIL  [refuse] What is my bank account number?
-        answered from sources/meetings/2026-03-18 advisor check-in.md
+        answered from wiki/concepts/money-admin.md
+  FAIL  [refuse] What is my bank routing number?
+        answered from wiki/concepts/money-admin.md
   FAIL  [refuse] Who won the 2022 World Cup?
         answered from README.md
   FAIL  [refuse] What is the payment processing vendor for Trailhead?
         answered from wiki/people/dr-lena-ortiz.md
   FAIL  [refuse] How much is the rent on the new lease?
         answered from wiki/projects/trailhead.md
-  Answerable questions passed: 10/10
-  Correct note ranked first:   9/10
-  Correct refusals:            0/4
-  Average context size:        1667 characters
-  TOTAL: 10/14 passed
+  Answerable questions passed: 11/11
+  Correct note ranked first:   10/11
+  Correct refusals:            0/5
+  Average context size:        1731 characters
+  TOTAL: 11/16 passed
 
 VaultBot (heading chunks, BM25, source weights, refusal)
 --------------------------------------------------------
@@ -265,7 +287,11 @@ VaultBot (heading chunks, BM25, source weights, refusal)
         wiki/projects/pantry-pal.md#Status
   PASS  [answer] Who has to measure battery drain before the demo?
         sources/meetings/2026-03-18 advisor check-in.md#Action items
+  PASS  [answer] How much do I move to savings each month?
+        wiki/concepts/money-admin.md#Monthly routine
   PASS  [refuse] What is my bank account number?
+        refused
+  PASS  [refuse] What is my bank routing number?
         refused
   PASS  [refuse] Who won the 2022 World Cup?
         refused
@@ -273,33 +299,33 @@ VaultBot (heading chunks, BM25, source weights, refusal)
         refused
   PASS  [refuse] How much is the rent on the new lease?
         refused
-  Answerable questions passed: 10/10
-  Correct note ranked first:   9/10
-  Correct refusals:            4/4
-  Average context size:        395 characters
-  TOTAL: 14/14 passed
+  Answerable questions passed: 11/11
+  Correct note ranked first:   11/11
+  Correct refusals:            5/5
+  Average context size:        403 characters
+  TOTAL: 16/16 passed
 
 Summary
 -------
-  Baseline: 10/14 passed
-  VaultBot: 14/14 passed
+  Baseline: 11/16 passed
+  VaultBot: 16/16 passed
   RESULT: PASS
 ```
 
 ## RAG enhancement: before and after
 
-Same vault, same 14 questions, same privacy exclusions.
+Same vault, same 16 questions, same privacy exclusions.
 
 | Measure | Baseline (DocuBot) | VaultBot |
 | --- | --- | --- |
-| Answerable questions passed | 10/10 | 10/10 |
-| Questions correctly refused | 0/4 | 4/4 |
-| Total | 10/14 | 14/14 |
-| Average context returned per answer | 1667 characters | 395 characters |
+| Answerable questions passed | 11/11 | 11/11 |
+| Questions correctly refused | 0/5 | 5/5 |
+| Total | 11/16 | 16/16 |
+| Average context returned per answer | 1731 characters | 403 characters |
 
 What changed in output quality:
 
-- **Refusals.** The baseline answered all four unanswerable questions, because a whole file almost always shares a common word like "the" or "is" with any question. For "Who won the 2022 World Cup?" it returned the vault README. VaultBot refuses all four.
+- **Refusals.** The baseline answered all five questions it should have refused, because a whole file almost always shares a common word like "the" or "is" with any question. For "Who won the 2022 World Cup?" it returned the vault README. VaultBot refuses all five.
 - **Context size.** Both systems find the right note for the answerable questions on a vault this small. The baseline returns three whole files. VaultBot returns three sections, about a quarter of the text, so an LLM gets less unrelated material to drift into, and a person reading the snippets sees the answer first.
 - **Before and after for one question**, "When are Dr. Ortiz's office hours?": the baseline returns the full Dr. Lena Ortiz page plus two other full files. VaultBot's first result is the section `wiki/people/dr-lena-ortiz.md#Working with her`, three lines long, whose first line is the answer.
 
@@ -309,16 +335,30 @@ On a real vault (about 2,700 notes and 17,600 chunks, not included here) the ind
 
 ```text
 $ python -m pytest -q
-.........................                                                [100%]
-25 passed in 0.04s
+........................................F                                [100%]
+=================================== FAILURES ===================================
+________________ test_readme_outputs_come_from_the_sample_vault ________________
+
+    def test_readme_outputs_come_from_the_sample_vault():
+        """Sample output in the README must never be generated from a real vault."""
+        with open("README.md", encoding="utf8") as readme_file:
+            readme = readme_file.read()
+>       assert "vault: sample_vault" in readme
+E       AssertionError: assert 'vault: sample_vault' in ''
+
+tests/test_vaultbot.py:245: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_vaultbot.py::test_readme_outputs_come_from_the_sample_vault
+1 failed, 40 passed in 0.07s
 ```
 
-The suite covers the loader (frontmatter, headings, code fences, private notes, exclude globs), retrieval (ranking, source filter, source weights), every guardrail, the RAG path with a fake LLM, and the evaluation harness itself.
+The suite covers the loader (frontmatter, headings, code fences, private notes, exclude globs), retrieval (ranking, source filter, source weights), every guardrail including the sensitive request block and identifier masking, the RAG path with a fake LLM, and the evaluation harness itself.
 
 ## Known limitations
 
 - **Retrieval is lexical.** A question has to share words with the note. "Why was Postgres rejected?" limited to `--source sources` is refused at confidence 0.46, because the meeting note says Sam "argued for Postgres" and never uses the word "rejected". Embeddings would fix this and would add a model download and a slower index.
-- **The confidence check weakens as the vault grows.** In a 2,700 note vault, almost every word appears somewhere, so a question like "What is my bank routing number?" found a chunk containing "bank" and "number" and passed the threshold at 0.76 with irrelevant snippets. On the sample vault the same style of question is refused. The citation check and the LLM's own refusal rule are the remaining layers in that case.
+- **The confidence check weakens as the vault grows.** In a 2,700 note vault, almost every word appears somewhere. Sensitive requests are now blocked by their own rule, but ordinary off topic questions still slip through: "Who is the president of France?" scored 0.65 on the real vault and returned unrelated snippets. On the sample vault the same style of question is refused. In that case the citations show the snippets are unrelated, and with `--llm` the model's own refusal rule is the remaining layer.
+- **The sensitive request block is a keyword list.** It over blocks ("How do I set up a password manager?" is refused) and it can be worded around ("the nine digits for my bank"). Identifier masking on output is the second layer for the second case.
 - **Redaction is pattern based.** It catches emails, phone numbers, and common key formats. It does not catch names, addresses, or account numbers written in other formats.
 - **No LLM output was captured in this README.** RAG generation is implemented and tested with a fake LLM. Live Gemini output depends on your own API key.
 - **The index is rebuilt on every run.** That is fine at 2 seconds and would need caching for a much larger vault.
@@ -334,7 +374,7 @@ _To be written by Aaron before submission._
 | `docubot.py` | Base project class, with its Phase 1 baseline completed. Used as the evaluation baseline. |
 | `vaultbot.py` | `VaultBot` (chunk index, BM25, source weights, confidence, answer pipeline) and `WholeFileVaultBot` (baseline on a vault). |
 | `vault_loader.py` | Vault walking, frontmatter, privacy exclusions, heading chunking. |
-| `guardrails.py` | Input validation, redaction, citation check. |
+| `guardrails.py` | Input validation, sensitive request block, identifier masking, redaction, citation check. |
 | `llm_client.py` | Gemini client from the base project, plus `answer_with_citations`. |
 | `evaluation.py`, `dataset.py` | Evaluation harness and its cases. |
 | `main.py` | CLI. |

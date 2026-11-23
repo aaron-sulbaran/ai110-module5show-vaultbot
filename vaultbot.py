@@ -14,6 +14,8 @@ answer_rag) and replaces what sits behind it:
 - A confidence guardrail: when the vault does not cover the question, the
   bot refuses instead of returning the least bad match.
 - Citations on every answer, checked before an LLM answer is shown.
+- A sensitive request block: questions asking for credentials or financial
+  and government identifiers are refused before retrieval runs.
 """
 
 import math
@@ -24,7 +26,10 @@ from dataclasses import dataclass
 from docubot import DocuBot
 from guardrails import (
     REFUSAL_MESSAGE,
+    SENSITIVE_REFUSAL_MESSAGE,
     check_citations,
+    detect_sensitive_request,
+    mask_identifiers,
     redact_sensitive,
     validate_query,
 )
@@ -224,10 +229,15 @@ class VaultBot(DocuBot):
         Returns an empty list when confidence is below the threshold, which
         makes the inherited answer modes refuse.
         """
+        if detect_sensitive_request(query):
+            return []
         results = self.search(query, top_k=top_k)
         if self.confidence_of(results) < self.min_confidence:
             return []
-        return [(result.chunk.chunk_id, result.chunk.text) for result in results]
+        return [
+            (result.chunk.chunk_id, mask_identifiers(result.chunk.text))
+            for result in results
+        ]
 
     # -----------------------------------------------------------
     # Answering
@@ -243,6 +253,14 @@ class VaultBot(DocuBot):
         if not is_valid:
             return self._refusal(query, cleaned_or_reason, confidence=0.0)
         query = cleaned_or_reason
+
+        sensitive_category = detect_sensitive_request(query)
+        if sensitive_category:
+            reason = (
+                f"Sensitive request ({sensitive_category}). "
+                "Refused before retrieval, whatever the vault contains."
+            )
+            return self._refusal(query, reason, confidence=0.0, answer=SENSITIVE_REFUSAL_MESSAGE)
 
         results = self.search(query, top_k=top_k, sources=sources)
         confidence = self.confidence_of(results)
@@ -288,10 +306,10 @@ class VaultBot(DocuBot):
         }
 
     @staticmethod
-    def _refusal(query, reason, confidence):
+    def _refusal(query, reason, confidence, answer=REFUSAL_MESSAGE):
         return {
             "question": query, "refused": True, "reason": reason,
-            "confidence": confidence, "answer": REFUSAL_MESSAGE,
+            "confidence": confidence, "answer": answer,
             "citations": [], "mode": "refusal",
         }
 
@@ -299,7 +317,9 @@ class VaultBot(DocuBot):
     def _format_snippets(results):
         blocks = []
         for number, result in enumerate(results, start=1):
-            blocks.append(f"[{number}] {result.chunk.chunk_id}\n{result.chunk.text}")
+            blocks.append(
+                f"[{number}] {result.chunk.chunk_id}\n{mask_identifiers(result.chunk.text)}"
+            )
         return "\n\n".join(blocks)
 
     def answer_retrieval_only(self, query, top_k=3):

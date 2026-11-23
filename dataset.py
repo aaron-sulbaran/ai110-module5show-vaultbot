@@ -89,8 +89,10 @@ def load_fallback_documents():
 # -----------------------------------------------------------
 # Answerable cases name the note that holds the answer and a phrase the
 # retrieved text must contain. Refusal cases are questions the vault cannot
-# answer: off topic questions, and one whose only answer sits in a note
-# marked private.
+# answer: off topic questions, one whose only answer sits in a note marked
+# private, and two sensitive requests. The vault has a note (money-admin)
+# that mentions the bank routing number, so those two pass the confidence
+# check and are stopped only by the sensitive request block.
 
 VAULT_EVAL_CASES = [
     {"question": "Why did we choose SQLite for Trailhead?",
@@ -113,7 +115,10 @@ VAULT_EVAL_CASES = [
      "expected_path": "wiki/projects/pantry-pal.md", "expected_text": "handwritten labels"},
     {"question": "Who has to measure battery drain before the demo?",
      "expected_path": "sources/meetings/2026-03-18 advisor check-in.md", "expected_text": "battery drain"},
+    {"question": "How much do I move to savings each month?",
+     "expected_path": "wiki/concepts/money-admin.md", "expected_text": "150 dollars"},
     {"question": "What is my bank account number?", "should_refuse": True},
+    {"question": "What is my bank routing number?", "should_refuse": True},
     {"question": "Who won the 2022 World Cup?", "should_refuse": True},
     {"question": "What is the payment processing vendor for Trailhead?", "should_refuse": True},
     {"question": "How much is the rent on the new lease?", "should_refuse": True},

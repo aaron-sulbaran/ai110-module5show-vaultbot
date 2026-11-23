@@ -42,20 +42,20 @@ Answer questions about one person's markdown notes by retrieving the section tha
 
 ## 4. Experiments and Comparisons
 
-Measured with `python main.py eval` on the sample vault (14 cases).
+Measured with `python main.py eval` on the sample vault (16 cases).
 
 | Measure | Baseline (DocuBot: whole files, keyword count) | VaultBot |
 | --- | --- | --- |
-| Answerable questions passed | 10/10 | 10/10 |
-| Correct note ranked first | 9/10 | 9/10 |
-| Questions correctly refused | 0/4 | 4/4 |
-| Average context per answer | 1,667 characters | 395 characters |
-| Total | 10/14 | 14/14 |
+| Answerable questions passed | 11/11 | 11/11 |
+| Correct note ranked first | 10/11 | 11/11 |
+| Questions correctly refused | 0/5 | 5/5 |
+| Average context per answer | 1,731 characters | 403 characters |
+| Total | 11/16 | 16/16 |
 
 **Patterns.**
 - The baseline never refuses. Any file shares some common word with any question, so "Who won the 2022 World Cup?" returns the vault README.
 - On a vault this small, both systems find the right note. The measurable gains are refusals and context size (VaultBot returns about a quarter of the text).
-- The first VaultBot version scored 12/14, below its own target. It refused "Why did we choose SQLite for Trailhead?" because the unseen word "choose" was weighted as the rarest possible word, and it missed the review schedule because "reviewed" did not match "review". Both were fixed (average weight for unseen words, light suffix folding) and the harness went to 14/14.
+- The first VaultBot version scored 12/14, below its own target. It refused "Why did we choose SQLite for Trailhead?" because the unseen word "choose" was weighted as the rarest possible word, and it missed the review schedule because "reviewed" did not match "review". Both were fixed (average weight for unseen words, light suffix folding) and the harness went to 14/14. Two cases were added later with the sensitive request block, for 16/16.
 
 RAG mode was exercised with a fake LLM in tests. No live Gemini comparison was run for this card.
 
@@ -65,11 +65,11 @@ RAG mode was exercised with a fake LLM in tests. No live Gemini comparison was r
 
 **Failure case 1: paraphrase.** Question: "Why was Postgres rejected?" with `--source sources`. The meeting note says Sam "argued for Postgres" and that storage "has to live on the phone". The word "rejected" appears nowhere in that source, so confidence is 0.46 and the system refuses an answerable question. It should have returned the kickoff discussion.
 
-**Failure case 2: large vault false confidence.** Question: "What is my bank routing number?" on a real 2,700 note vault. Some chunk contained both "bank" and "number" in unrelated contexts, coverage reached 0.76, and the system returned irrelevant snippets instead of refusing. It should have refused. The same style of question is refused on the sample vault, so the evaluation harness does not catch this.
+**Failure case 2: large vault false confidence (fixed for sensitive requests, open for the rest).** Question: "What is my bank routing number?" on a real 2,700 note vault. The words appear together in unrelated notes, coverage reached 0.76, and the first version returned irrelevant snippets instead of refusing. A proximity based confidence score was tried and measured: it changed nothing, because the words really are adjacent in some notes. The fix was a separate rule, `detect_sensitive_request`, which refuses by what the question asks for. The sample vault now has a note that reproduces the problem, so the harness covers it. Still open: an ordinary off topic question such as "Who is the president of France?" scores 0.65 on the real vault and is answered with unrelated snippets.
 
-**When VaultBot should refuse:** when no chunk covers at least half of the question's information, when the only answer is in a note marked private, when the question is empty or has no searchable words, and when the LLM's answer cannot be tied to the provided snippets.
+**When VaultBot should refuse:** when the question asks for a credential or a financial or government identifier, when no chunk covers at least half of the question's information, when the only answer is in a note marked private, when the question is empty or has no searchable words, and when the LLM's answer cannot be tied to the provided snippets.
 
-**Guardrails implemented:** input validation, confidence refusal, privacy exclusions at load time, redaction before any LLM call, citation verification after generation, and a fallback to plain snippets when verification fails.
+**Guardrails implemented:** input validation, sensitive request block, identifier masking on all displayed snippets, confidence refusal, privacy exclusions at load time, redaction before any LLM call, citation verification after generation, and a fallback to plain snippets when verification fails.
 
 ---
 
@@ -77,7 +77,7 @@ RAG mode was exercised with a fake LLM in tests. No live Gemini comparison was r
 
 **Limitations**
 1. Lexical retrieval misses paraphrases and synonyms.
-2. The coverage based confidence check loses precision as the vault grows.
+2. The coverage based confidence check loses precision as the vault grows, and the sensitive request block is a keyword list that can over block or be worded around.
 3. Redaction is pattern based and misses names, addresses, and unusual formats.
 4. Wikilinks between notes are ignored, so a person page does not pull in the project pages it links to.
 5. The evaluation set is 14 hand written cases on a fictional vault.

@@ -4,7 +4,15 @@ import pytest
 
 from dataset import VAULT_EVAL_CASES
 from evaluation import evaluate_vault
-from guardrails import REFUSAL_MESSAGE, check_citations, redact_sensitive, validate_query
+from guardrails import (
+    REFUSAL_MESSAGE,
+    SENSITIVE_REFUSAL_MESSAGE,
+    check_citations,
+    detect_sensitive_request,
+    mask_identifiers,
+    redact_sensitive,
+    validate_query,
+)
 from vault_loader import chunk_note, load_vault, parse_frontmatter, split_into_sections
 from vaultbot import VaultBot, WholeFileVaultBot, tokenize
 
@@ -92,7 +100,7 @@ def test_source_weights_change_the_ranking():
 # ----- guardrails -----------------------------------------------------------
 
 @pytest.mark.parametrize("question", [
-    "What is my bank account number?",
+    "What is the payment processing vendor for Trailhead?",
     "Who won the 2022 World Cup?",
     "How much is the rent on the new lease?",
 ])
@@ -124,6 +132,63 @@ def test_citation_check():
     assert check_citations("Tuesdays from 2 to 4 PM [1].", source_count=3)[0]
     assert not check_citations("Tuesdays from 2 to 4 PM.", source_count=3)[0]
     assert not check_citations("Tuesdays [7].", source_count=3)[0]
+
+
+# ----- sensitive requests ---------------------------------------------------
+
+@pytest.mark.parametrize("question", [
+    "What is my bank routing number?",
+    "What is my bank account number?",
+    "what's my SSN",
+    "What is my credit card number?",
+    "What is my wifi password?",
+    "Find the API key for the weather service",
+    "What is my passport number?",
+])
+def test_sensitive_requests_are_refused_before_retrieval(bot, question):
+    result = bot.ask(question)
+    assert result["refused"] and result["answer"] == SENSITIVE_REFUSAL_MESSAGE
+    assert result["citations"] == [] and "Sensitive request" in result["reason"]
+    assert bot.retrieve(question) == []
+
+
+def test_sensitive_block_holds_even_when_the_vault_matches_the_words(bot):
+    question = "What is my bank routing number?"
+    # The money-admin note makes plain retrieval confident about this question,
+    # which is the failure seen on a real vault. Only the block stops it.
+    assert bot.confidence_of(bot.search(question)) >= bot.min_confidence
+    assert bot.ask(question)["refused"]
+
+
+def test_sensitive_requests_never_reach_the_llm():
+    llm = FakeLLM("It is 021000021 [1].")
+    result = VaultBot(SAMPLE_VAULT, llm_client=llm).ask("What is my bank routing number?", use_llm=True)
+    assert result["refused"] and llm.received_snippets is None
+
+
+@pytest.mark.parametrize("question", [
+    "How much do I move to savings each month?",
+    "When is the Trailhead prototype demo due?",
+    "Which bank is the checking account at?",
+    "What are the account settings for the tile cache?",
+])
+def test_ordinary_questions_are_not_treated_as_sensitive(question):
+    assert detect_sensitive_request(question) is None
+
+
+def test_identifiers_are_masked_in_displayed_snippets(tmp_path):
+    (tmp_path / "paperwork.md").write_text(
+        "# Paperwork\n## Tax forms\nThe tax form lists SSN 123-45-6789 and "
+        "routing number: 021000021 and card 4111 1111 1111 1111 for the refund.\n"
+    )
+    answer = VaultBot(str(tmp_path)).ask("What does the tax form list for the refund?")["answer"]
+    assert "123-45-6789" not in answer and "021000021" not in answer and "4111" not in answer
+    assert "[REDACTED ID]" in answer and "[REDACTED ACCOUNT]" in answer and "[REDACTED CARD]" in answer
+
+
+def test_mask_identifiers_leaves_ordinary_numbers_alone():
+    text = "Midterm 2 is April 9 in room 3.214. The demo is due 2026-04-17 at 10 AM."
+    assert mask_identifiers(text) == text
 
 
 # ----- RAG path with a fake LLM ---------------------------------------------
@@ -169,3 +234,13 @@ def test_baseline_never_refuses_and_sends_more_context():
     vaultbot, _ = evaluate_vault(VaultBot(SAMPLE_VAULT), VAULT_EVAL_CASES)
     assert baseline["refusals_passed"] == 0
     assert vaultbot["average_context_chars"] < baseline["average_context_chars"]
+
+
+# ----- repository hygiene ---------------------------------------------------
+
+def test_readme_outputs_come_from_the_sample_vault():
+    """Sample output in the README must never be generated from a real vault."""
+    with open("README.md", encoding="utf8") as readme_file:
+        readme = readme_file.read()
+    assert "vault: sample_vault" in readme
+    assert "/Users/" not in readme and "/home/" not in readme
