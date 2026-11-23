@@ -352,7 +352,11 @@ The suite covers the loader (frontmatter, headings, code fences, private notes, 
 
 ## Reflection
 
-_To be written by Aaron before submission._
+I built VaultBot with Claude Code as my preferred agentic engineering tool. I brought the idea (a RAG over my Obsidian vault, built on the DocuBot Tinker), the rule that a public repo could not expose my own personal vault notes, and the scope for this v1 RAG for my own vault that could still serve useful to others as well. Claude read the rubric, proposed the design, and wrote the code, tests, and docs.
+
+I accepted its suggestion to use BM25 keyword ranking instead of embeddings, because it keeps everything on my machine and indexes my 2,707 notes in under two seconds. One suggestion that didn't survive was its first confidence formula which treated any word my vault had never seen as the rarest word possible, so it refused a question the notes could answer. The evaluation script caught that at 12 of 14, and the formula was changed before it reached 14 of 14. I also changed my own plan from "a RAG for my vault" to a tool for anyone's vault with a fictional sample, because the deliverable is a public link and I didn't want to have to test on my own vault with my own personal details in a public repo.
+
+What surprised me is that the refusal guardrail passed every test on the 12 note sample vault and then let "what is my bank routing number" through on my real vault, because across thousands of notes almost every word shows up somewhere. When I noticed, I worked with Claude to build a sensitive-request block for any PII like bank information or IDs. The system is also keyword only, so a question worded differently from the note gets refused. Next I would add a proximity check, local embeddings, and ease of use so that anyone could use the tool without needing to consistently monitor how agents run the tooling.
 
 ## Files
 

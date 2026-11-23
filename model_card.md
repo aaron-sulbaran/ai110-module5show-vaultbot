@@ -83,7 +83,7 @@ RAG mode was exercised with a fake LLM in tests. No live Gemini comparison was r
 5. The evaluation set is 14 hand written cases on a fictional vault.
 
 **Future improvements**
-1. Require question words to appear near each other in a chunk before counting them as covered.
+1. Add a second check that the top snippet actually answers the question (a semantic similarity score or an LLM judge). A proximity rule was measured and did not help.
 2. Add local embeddings as a second retriever and merge the two rankings.
 3. Follow wikilinks one hop from the top result.
 4. Build an evaluation set from real questions asked of a real vault, kept outside the repository.
