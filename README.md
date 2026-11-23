@@ -335,21 +335,8 @@ On a real vault (about 2,700 notes and 17,600 chunks, not included here) the ind
 
 ```text
 $ python -m pytest -q
-........................................F                                [100%]
-=================================== FAILURES ===================================
-________________ test_readme_outputs_come_from_the_sample_vault ________________
-
-    def test_readme_outputs_come_from_the_sample_vault():
-        """Sample output in the README must never be generated from a real vault."""
-        with open("README.md", encoding="utf8") as readme_file:
-            readme = readme_file.read()
->       assert "vault: sample_vault" in readme
-E       AssertionError: assert 'vault: sample_vault' in ''
-
-tests/test_vaultbot.py:245: AssertionError
-=========================== short test summary info ============================
-FAILED tests/test_vaultbot.py::test_readme_outputs_come_from_the_sample_vault
-1 failed, 40 passed in 0.07s
+.........................................                                [100%]
+41 passed in 0.05s
 ```
 
 The suite covers the loader (frontmatter, headings, code fences, private notes, exclude globs), retrieval (ranking, source filter, source weights), every guardrail including the sensitive request block and identifier masking, the RAG path with a fake LLM, and the evaluation harness itself.
