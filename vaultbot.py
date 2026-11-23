@@ -46,13 +46,20 @@ when where which who whom why will with would you your
 
 
 def tokenize(text):
-    """Lowercase words, stopwords removed, plurals folded to the singular."""
+    """
+    Lowercase words, stopwords removed, with light suffix folding so that
+    "reviews", "reviewed", and "reviewing" all index as "review".
+    """
     tokens = []
     for word in re.findall(r"[a-z0-9]+", text.lower()):
         if word in STOPWORDS:
             continue
         if word.endswith("ies") and len(word) > 4:
             word = word[:-3] + "y"
+        elif word.endswith("ing") and len(word) > 6:
+            word = word[:-3]
+        elif word.endswith("ed") and len(word) > 5:
+            word = word[:-2]
         elif word.endswith("s") and not word.endswith("ss") and len(word) > 3:
             word = word[:-1]
         tokens.append(word)
@@ -125,8 +132,11 @@ class VaultBot(DocuBot):
             token: math.log(1 + (chunk_count - len(postings) + 0.5) / (len(postings) + 0.5))
             for token, postings in index.items()
         }
-        # A word the vault has never seen is as informative as a word can be.
-        self.unseen_token_weight = math.log(1 + (chunk_count + 0.5) / 0.5)
+        # A question word the vault has never seen counts as an average word.
+        # Counting it as the rarest possible word made one paraphrased verb
+        # ("choose" when the note says "decisions") enough to force a refusal.
+        weights = self.inverse_document_frequency.values()
+        self.unseen_token_weight = sum(weights) / len(weights) if weights else 1.0
         return dict(index)
 
     # -----------------------------------------------------------
@@ -140,8 +150,8 @@ class VaultBot(DocuBot):
         """
         Share of the question's information (IDF weighted) that the chunk
         contains. Rare words count more than common ones, and words the vault
-        has never seen count the most, so an off topic question scores low
-        even when a few common words happen to match.
+        has never seen still count against the chunk, so an off topic question
+        scores low even when a few common words happen to match.
         """
         unique_tokens = set(query_tokens)
         if not unique_tokens:

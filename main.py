@@ -1,18 +1,35 @@
 """
-CLI runner for the DocuBot tinker activity.
+CLI runner for VaultBot (DocuBot extended to a personal vault).
 
-Supports three modes:
-1. Naive LLM generation over all docs (Phase 0)
-2. Retrieval only (Phase 1)
-3. RAG: retrieval plus LLM generation (Phase 2)
+One shot commands:
+    python main.py ask "When are Dr. Ortiz's office hours?"
+    python main.py ask "..." --llm          retrieval plus Gemini, with citations
+    python main.py ask "..." --source wiki  search one source only
+    python main.py stats                    what was indexed
+    python main.py eval                     run the evaluation harness
+
+With no command it opens the original DocuBot menu:
+1. Naive LLM generation over all notes
+2. Retrieval only
+3. RAG: retrieval plus LLM generation
+
+The vault is sample_vault/ unless VAULT_PATH is set (in the shell or .env)
+or --vault is passed.
 """
+
+import argparse
+import json
+import os
+import sys
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from docubot import DocuBot
+from vaultbot import VaultBot
 from llm_client import GeminiClient
-from dataset import SAMPLE_QUERIES
+from dataset import VAULT_EVAL_CASES
+
+SAMPLE_QUERIES = [case["question"] for case in VAULT_EVAL_CASES]
 
 
 def try_create_llm_client():
@@ -129,12 +146,63 @@ def run_rag_mode(bot, has_llm):
         print()
 
 
-def main():
-    print("DocuBot Tinker Activity")
-    print("=======================\n")
+def build_bot(vault_path, llm_client=None):
+    """Builds a VaultBot, honoring VAULT_EXCLUDE (comma separated globs)."""
+    exclude_globs = [
+        pattern.strip()
+        for pattern in os.getenv("VAULT_EXCLUDE", "").split(",")
+        if pattern.strip()
+    ]
+    return VaultBot(vault_path, llm_client=llm_client, exclude_globs=exclude_globs)
+
+
+def run_ask(args):
+    llm_client = None
+    if args.llm:
+        llm_client, has_llm = try_create_llm_client()
+        if not has_llm:
+            print("Falling back to retrieval only.\n")
+
+    bot = build_bot(args.vault, llm_client=llm_client)
+    sources = set(args.source) if args.source else None
+    result = bot.ask(args.question, top_k=args.top_k, use_llm=args.llm, sources=sources)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    print(f"Question:   {result['question']}")
+    print(f"Mode:       {result['mode']}")
+    print(f"Confidence: {result['confidence']:.2f} (threshold {bot.min_confidence:.2f})")
+    if result["reason"]:
+        print(f"Note:       {result['reason']}")
+    print()
+    print(result["answer"])
+    if result["mode"] == "rag":
+        print("\nSources:")
+        for number, citation in enumerate(result["citations"], start=1):
+            print(f"  [{number}] {citation}")
+    return 0
+
+
+def run_stats(args):
+    bot = build_bot(args.vault)
+    for key, value in bot.stats().items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def run_eval(args):
+    from evaluation import run_vault_evaluation
+    return 0 if run_vault_evaluation() else 1
+
+
+def run_interactive(vault_path):
+    print("VaultBot (interactive)")
+    print("======================\n")
 
     llm_client, has_llm = try_create_llm_client()
-    bot = DocuBot(llm_client=llm_client)
+    bot = build_bot(vault_path, llm_client=llm_client)
 
     while True:
         choice = choose_mode(has_llm)
@@ -152,5 +220,33 @@ def main():
             print("\nUnknown choice. Please pick 1, 2, 3, or q.\n")
 
 
+def main(argv=None):
+    default_vault = os.getenv("VAULT_PATH", "sample_vault")
+
+    parser = argparse.ArgumentParser(description="Ask questions of a markdown vault.")
+    parser.add_argument("--vault", default=default_vault, help="path to the vault folder")
+    commands = parser.add_subparsers(dest="command")
+
+    ask = commands.add_parser("ask", help="answer one question")
+    ask.add_argument("question")
+    ask.add_argument("--top-k", type=int, default=3)
+    ask.add_argument("--llm", action="store_true", help="generate an answer with Gemini")
+    ask.add_argument("--source", action="append", help="limit to a top level folder, repeatable")
+    ask.add_argument("--json", action="store_true", help="print the raw result")
+    ask.set_defaults(handler=run_ask)
+
+    stats = commands.add_parser("stats", help="show what was indexed")
+    stats.set_defaults(handler=run_stats)
+
+    evaluate = commands.add_parser("eval", help="run the evaluation harness on sample_vault")
+    evaluate.set_defaults(handler=run_eval)
+
+    args = parser.parse_args(argv)
+    if args.command is None:
+        run_interactive(args.vault)
+        return 0
+    return args.handler(args)
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
