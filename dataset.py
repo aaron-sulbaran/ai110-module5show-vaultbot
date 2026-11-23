@@ -82,3 +82,39 @@ def load_fallback_documents():
     Provided as a helper for environments where no docs/ folder is available.
     """
     return list(FALLBACK_DOCS.items())
+
+
+# -----------------------------------------------------------
+# VaultBot evaluation cases (run against sample_vault/)
+# -----------------------------------------------------------
+# Answerable cases name the note that holds the answer and a phrase the
+# retrieved text must contain. Refusal cases are questions the vault cannot
+# answer: off topic questions, and one whose only answer sits in a note
+# marked private.
+
+VAULT_EVAL_CASES = [
+    {"question": "Why did we choose SQLite for Trailhead?",
+     "expected_path": "wiki/projects/trailhead.md", "expected_text": "no signal"},
+    {"question": "When is the Trailhead prototype demo due?",
+     "expected_path": "wiki/projects/trailhead.md", "expected_text": "April 17"},
+    {"question": "When are Dr. Ortiz's office hours?",
+     "expected_path": "wiki/people/dr-lena-ortiz.md", "expected_text": "Tuesdays"},
+    {"question": "Which day is Sam unavailable?",
+     "expected_path": "wiki/people/sam-whitfield.md", "expected_text": "Fridays"},
+    {"question": "What percent of the algorithms grade is homework?",
+     "expected_path": "wiki/courses/cs-331-algorithms.md", "expected_text": "30 percent"},
+    {"question": "What does midterm 2 cover?",
+     "expected_path": "wiki/courses/cs-331-algorithms.md", "expected_text": "dynamic programming"},
+    {"question": "What are my spaced repetition review intervals?",
+     "expected_path": "wiki/concepts/spaced-repetition.md", "expected_text": "21 days"},
+    {"question": "What is the rule for postponed tasks in the weekly review?",
+     "expected_path": "wiki/concepts/weekly-review.md", "expected_text": "three weeks"},
+    {"question": "Why is Pantry Pal paused?",
+     "expected_path": "wiki/projects/pantry-pal.md", "expected_text": "handwritten labels"},
+    {"question": "Who has to measure battery drain before the demo?",
+     "expected_path": "sources/meetings/2026-03-18 advisor check-in.md", "expected_text": "battery drain"},
+    {"question": "What is my bank account number?", "should_refuse": True},
+    {"question": "Who won the 2022 World Cup?", "should_refuse": True},
+    {"question": "What is the payment processing vendor for Trailhead?", "should_refuse": True},
+    {"question": "How much is the rent on the new lease?", "should_refuse": True},
+]

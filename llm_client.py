@@ -127,3 +127,52 @@ Rules:
             return (response.text or "").strip()
         except Exception as e:
             return f"API error — could not generate answer. ({type(e).__name__}: {e})"
+
+    # -----------------------------------------------------------
+    # VaultBot: RAG generation with numbered, checkable citations
+    # -----------------------------------------------------------
+
+    def answer_with_citations(self, query, numbered_snippets):
+        """
+        Generate an answer from numbered vault snippets.
+
+        numbered_snippets: list of (number, label, text). The text has
+        already been through guardrails.redact_sensitive.
+
+        The model must cite snippets as [n]. VaultBot verifies those numbers
+        afterwards (guardrails.check_citations) and discards the answer if
+        they do not line up with the snippets that were sent.
+        """
+        if not numbered_snippets:
+            return "I do not know based on this vault."
+
+        context = "\n\n".join(
+            f"[{number}] {label}\n{text}" for number, label, text in numbered_snippets
+        )
+
+        prompt = f"""
+You answer questions about one person's private notes. Wrong personal facts
+are worse than no answer.
+
+Numbered snippets from the notes:
+{context}
+
+Question:
+{query}
+
+Rules:
+- Use only the snippets. Never add facts from general knowledge.
+- After every claim, cite the snippet it came from as [n].
+- If the snippets do not answer the question, reply exactly:
+  "I do not know based on this vault."
+- Keep the answer under 120 words.
+"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=GEMINI_MODEL_NAME,
+                contents=prompt
+            )
+            return (response.text or "").strip()
+        except Exception as e:
+            return f"API error, could not generate answer. ({type(e).__name__}: {e})"
